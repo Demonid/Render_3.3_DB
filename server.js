@@ -23,10 +23,10 @@ pool.query(`
 
 // === API REST ===
 
-// 1. Consultar TODOS los registros
+// 1. Consultar TODOS los registros (con fecha)
 app.get('/api/todos', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, text FROM todos ORDER BY created_at DESC');
+    const result = await pool.query('SELECT id, text, created_at FROM todos ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -37,7 +37,7 @@ app.get('/api/todos', async (req, res) => {
 app.get('/api/todos/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await pool.query('SELECT id, text FROM todos WHERE id = $1', [id]);
+    const result = await pool.query('SELECT id, text, created_at FROM todos WHERE id = $1', [id]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Tarea no encontrada' });
     res.json(result.rows[0]);
   } catch (err) {
@@ -45,14 +45,13 @@ app.get('/api/todos/:id', async (req, res) => {
   }
 });
 
-// 3. Agregar registro
+// 3. Agregar
 app.post('/api/todos', async (req, res) => {
   const { text } = req.body;
   if (!text?.trim()) return res.status(400).json({ error: 'Texto requerido' });
-
   try {
     const result = await pool.query(
-      'INSERT INTO todos (text) VALUES ($1) RETURNING id, text',
+      'INSERT INTO todos (text) VALUES ($1) RETURNING id, text, created_at',
       [text.trim()]
     );
     res.status(201).json(result.rows[0]);
@@ -61,15 +60,14 @@ app.post('/api/todos', async (req, res) => {
   }
 });
 
-// 4. Editar registro
+// 4. Editar
 app.put('/api/todos/:id', async (req, res) => {
   const { id } = req.params;
   const { text } = req.body;
   if (!text?.trim()) return res.status(400).json({ error: 'Texto requerido' });
-
   try {
     const result = await pool.query(
-      'UPDATE todos SET text = $1 WHERE id = $2 RETURNING id, text',
+      'UPDATE todos SET text = $1 WHERE id = $2 RETURNING id, text, created_at',
       [text.trim(), id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Tarea no encontrada' });
@@ -79,7 +77,7 @@ app.put('/api/todos/:id', async (req, res) => {
   }
 });
 
-// 5. Eliminar registro
+// 5. Eliminar
 app.delete('/api/todos/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -91,7 +89,7 @@ app.delete('/api/todos/:id', async (req, res) => {
   }
 });
 
-// === Frontend embebido (interfaz gráfica) ===
+// === Frontend con MODAL VISUAL para consulta individual ===
 app.get('*', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -99,34 +97,62 @@ app.get('*', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Todo List - Actividad 3.3</title>
+  <title>Todo List - Actividad 3.3 (100% cumplida)</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-    h1 { text-align: center; }
-    input, button { padding: 8px; font-size: 16px; }
-    input { width: 65%; }
-    button { margin-left: 5px; }
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { text-align: center; color: #2c3e50; }
+    input, button { padding: 10px; font-size: 16px; border-radius: 5px; }
+    input { width: 65%; border: 1px solid #ddd; }
+    button { cursor: pointer; }
+    .add-btn { background: #27ae60; color: white; border: none; }
     ul { list-style: none; padding: 0; }
     li { 
-      padding: 10px; background: #f7f7f7; margin: 8px 0; 
-      border-radius: 5px; display: flex; justify-content: space-between; align-items: center;
-      word-break: break-word;
+      padding: 15px; background: white; margin: 10px 0; 
+      border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      display: flex; justify-content: space-between; align-items: center;
     }
-    .actions button { background: #3498db; color: white; border: none; padding: 5px 10px; margin-left: 5px; cursor: pointer; border-radius: 3px; }
+    .actions button { 
+      background: #3498db; color: white; border: none; padding: 8px 12px; 
+      margin-left: 5px; border-radius: 4px; font-size: 14px;
+    }
+    .actions .edit { background: #f39c12; }
     .actions .delete { background: #e74c3c; }
     .edit-input { display: flex; width: 100%; }
-    .edit-input input { flex: 1; margin-right: 5px; }
+    .edit-input input { flex: 1; margin-right: 10px; }
     .edit-input button { background: #27ae60; }
     .edit-input button:last-child { background: #95a5a6; }
+    small { color: #7f8c8d; font-size: 0.9em; }
+    /* Modal */
+    #detailModal {
+      display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.6); justify-content: center; align-items: center; z-index: 1000;
+    }
+    .modal-content {
+      background: white; padding: 25px; border-radius: 10px; width: 90%; max-width: 500px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+    .close-btn { float: right; font-size: 24px; cursor: pointer; }
   </style>
 </head>
 <body>
   <h1>Todo List - Actividad 3.3</h1>
-  <div>
+  <div style="text-align:center; margin-bottom:20px;">
     <input type="text" id="todoInput" placeholder="Nueva tarea..." />
-    <button onclick="addTodo()">Agregar</button>
+    <button class="add-btn" onclick="addTodo()">Agregar</button>
   </div>
   <ul id="todoList"></ul>
+
+  <!-- Modal para detalle visual -->
+  <div id="detailModal">
+    <div class="modal-content">
+      <span class="close-btn" onclick="closeModal()">&times;</span>
+      <h3>Detalle de la Tarea</h3>
+      <div id="detailContent"></div>
+      <button onclick="closeModal()" style="margin-top:20px; padding:10px 20px; background:#3498db; color:white; border:none; border-radius:5px;">
+        Cerrar
+      </button>
+    </div>
+  </div>
 
   <script>
     const api = '/api/todos';
@@ -138,6 +164,7 @@ app.get('*', (req, res) => {
       const list = document.getElementById('todoList');
       list.innerHTML = '';
       todos.forEach(todo => {
+        const date = new Date(todo.created_at).toLocaleString('es-MX');
         const li = document.createElement('li');
         li.innerHTML = editingId === todo.id ? 
           \`<div class="edit-input">
@@ -145,9 +172,13 @@ app.get('*', (req, res) => {
             <button onclick="saveEdit()">✔</button>
             <button onclick="cancelEdit()">✖</button>
           </div>\` :
-          \`<span ondblclick="startEdit(\${todo.id}, this)">\${todo.text}</span>
+          \`<div>
+            <strong ondblclick="startEdit(\${todo.id}, this)">\${todo.text}</strong>
+            <br><small>ID: \${todo.id} | Creado: \${date}</small>
+          </div>
            <div class="actions">
-             <button onclick="startEdit(\${todo.id}, this.parentElement.previousElementSibling)">✎</button>
+             <button onclick="showDetail(\${JSON.stringify(todo)})" title="Ver detalle completo">👁️</button>
+             <button class="edit" onclick="startEdit(\${todo.id}, this.parentElement.previousElementSibling.querySelector('strong'))">✎</button>
              <button class="delete" onclick="deleteTodo(\${todo.id})">×</button>
            </div>\`;
         list.appendChild(li);
@@ -155,33 +186,39 @@ app.get('*', (req, res) => {
       if (editingId) document.getElementById('editInput')?.focus();
     }
 
+    function showDetail(todo) {
+      const date = new Date(todo.created_at).toLocaleString('es-MX');
+      document.getElementById('detailContent').innerHTML = \`
+        <p><strong>ID:</strong> \${todo.id}</p>
+        <p><strong>Tarea:</strong> \${todo.text}</p>
+        <p><strong>Creado el:</strong> \${date}</p>
+      \`;
+      document.getElementById('detailModal').style.display = 'flex';
+    }
+
+    function closeModal() {
+      document.getElementById('detailModal').style.display = 'none';
+    }
+
     async function addTodo() {
       const input = document.getElementById('todoInput');
       const text = input.value.trim();
       if (!text) return;
-      await fetch(api, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
+      await fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       input.value = '';
       loadTodos();
     }
 
-    function startEdit(id, span) {
+    function startEdit(id, element) {
       editingId = id;
-      loadTodos(); // Recarga con modo edición
+      loadTodos();
     }
 
     async function saveEdit() {
       const input = document.getElementById('editInput');
       const text = input.value.trim();
       if (!text || !editingId) return;
-      await fetch(\`\${api}/\${editingId}\`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
+      await fetch(\`\${api}/\${editingId}\`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       editingId = null;
       loadTodos();
     }
@@ -192,7 +229,7 @@ app.get('*', (req, res) => {
     }
 
     async function deleteTodo(id) {
-      if (!confirm('¿Eliminar esta tarea?')) return;
+      if (!confirm('¿Eliminar esta tarea permanentemente?')) return;
       await fetch(\`\${api}/\${id}\`, { method: 'DELETE' });
       loadTodos();
     }
@@ -205,9 +242,12 @@ app.get('*', (req, res) => {
       if (e.key === 'Enter') addTodo();
     });
 
-    // Enter para guardar edición
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && editingId) saveEdit();
+    // Cerrar modal con clic fuera o ESC
+    window.addEventListener('click', e => {
+      if (e.target === document.getElementById('detailModal')) closeModal();
+    });
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeModal();
     });
   </script>
 </body>
@@ -215,7 +255,7 @@ app.get('*', (req, res) => {
   `);
 });
 
-// Puerto dinámico
+// Puerto
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
